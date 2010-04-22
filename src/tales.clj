@@ -9,7 +9,12 @@
 	:else
 	(first 
 	 (remove nil? 
-		 (map #(get-in context %) 
+		 (map #(cond (= (first %) :default)
+			     :default
+			     (= (first %) :nothing)
+			     :nothing
+			     :else
+			     (get-in context %))
 		      (for [p (re-split #"\|" p)]
 			(map keyword (re-split #"\/" (.trim p)))))))))
 	     
