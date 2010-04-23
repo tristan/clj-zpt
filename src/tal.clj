@@ -134,13 +134,18 @@
 				 element))]
 		 (if (string? element)
 		   element ; if the element has been replaced with a string, just return it
-		   (if (contains? (:attrs element) :tal:attributes)
-		     (assoc element :attrs (tal:attributes (:tal:attributes (:attrs element))
-							   (:attrs element)
-							   global local))
-		     element)
-	  ; tal:attributes
-	  ; tal:omit-tags
+		   (let [element (if (contains? (:attrs element) :tal:attributes) ; tal:attributes
+				   (assoc element :attrs (tal:attributes (:tal:attributes (:attrs element))
+									 (:attrs element)
+									 global local))
+				   element)]
+		     (if (and (contains? (:attrs element) :tal:omit-tag) ; tal:omit-tag
+			      (or (= (:tal:omit-tag (:attrs element)) "")
+				  (tal:condition (:tal:omit-tag (:attrs element)) global local)))
+		       (vec
+			(apply concat (for [e (:content element)]
+					(process-element e global local))))
+		       element))
 		   ))))))]
     (cond (string? element)
 	  [element]
