@@ -48,15 +48,39 @@
       true
       false)))
 
+(defn tal:attributes [argument attrs global local]
+; argument             ::= attribute_statement [';' attribute_statement]*
+; attribute_statement  ::= attribute_name expression
+; attribute_name       ::= [namespace ':'] Name
+; namespace            ::= Name
+  (loop [arguments (re-split #"(?<!;);(?!;)" argument) attrs attrs]
+    (if (empty? arguments)
+      attrs
+      (let [attribute_statement (first arguments)
+	    [attribute_name expression] (re-split #" " attribute_statement 2)
+	    ; since hiccups doesn't know about namespaces yet,
+	    ; ignoring difference between namespace and name for now
+	    result (tales/path expression (conj @global local))
+	    ]
+	(recur (rest arguments)
+	       (cond (= result :nothing)
+		     (dissoc attrs (keyword attribute_name))
+		     (= result :default)
+		     attrs
+		     :else
+		     (assoc attrs (keyword attribute_name) result)))))))
+
+
 ; TODO: throw error on unknown tal commands
 (defn process-element [element 
 		       global local]
   (let [element
 	(cond
-	 (or (nil? (:attrs element)) 
-	     (empty? (:attrs element))) ; nothing to do if we have no attrs
+	 (empty? (:attrs element)) ; nothing to do if we have no attrs
 	 element
 	 ; error checking
+	 (> (count (filter #(= (key %) :tal:define) (:attrs element))) 1)
+	 (throw (tal.TALError. "duplicate TAL attribute 'define'"))
 	 (> (count (filter #(= (key %) :tal:repeat) (:attrs element))) 1)
 	 (throw (tal.TALError. "duplicate TAL attribute 'repeat'"))
 	 (> (count (filter #(= (key %) :tal:replace) (:attrs element))) 1)
@@ -69,12 +93,9 @@
 	 (throw (tal.TALError. "tal:content and tal:replace are mutually exclusive"))
 	 :else ; no errors yet
 	 (let [local ; tal:define
-	       (loop [local local
-		      t (filter #(= (key %) :tal:define) (:attrs element))] ; TODO: check the ordering of attrs
-		 (if (empty t)
-		   local
-		   (recur (tal:define (val (first t)) global local)
-			  (rest t))))
+	       (if (contains? (:attrs element) :tal:define)
+		 (tal:define (:tal:define (:attrs element)) global local)
+		 local)
 	       ]
 	   (if (not-every? true? (map #(tal:condition (val %) global local)
 				      (filter #(= (key %) :tal:condition) (:attrs element))))
@@ -99,8 +120,10 @@
 						     :start (= 0 index)
 						     :end (= (dec (count repeat)) index)
 						     :length (count repeat)}}
-						   variable_name (nth repeat index)})))))
+						   variable_name (nth repeat index)}))))))
 	       (let [element (if (contains? (:attrs element) :tal:replace) ; process tal:replace
+			       ; NOTE: the current replace implementation will ignore tal:attributes
+			       ; unless the replace is cancelled
 			       (or (tal:replace (:tal:replace (:attrs element)) global local) element)
 			       (if (contains? (:attrs element) :tal:content) ; process tal:content
 				 (let [new-content (tal:content (:tal:content (:attrs element)) global local)]
@@ -111,7 +134,11 @@
 				 element))]
 		 (if (string? element)
 		   element ; if the element has been replaced with a string, just return it
-		   element ; TODO: implement tags below
+		   (if (contains? (:attrs element) :tal:attributes)
+		     (assoc element :attrs (tal:attributes (:tal:attributes (:attrs element))
+							   (:attrs element)
+							   global local))
+		     element)
 	  ; tal:attributes
 	  ; tal:omit-tags
 		   ))))))]
@@ -122,7 +149,7 @@
 	    (println element)
 	    element)
 	  :else
-	  (vector
+	  (vector ; TODO: i'm not fond of all this vector wrapping, is it really necessary? 
 	  (vec
 	   (cons (:tag element)
 		 (cons (apply dissoc (:attrs element) (filter #(re-find #"^:tal:" (str %)) (keys (:attrs element))))
