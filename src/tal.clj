@@ -2,12 +2,13 @@
   (:require hiccup.core
 	    clojure.xml
 	    tales)
-  (:import org.apache.commons.io.IOUtils)
+  (:import org.apache.commons.io.IOUtils
+	   KeyError)
   (:use clojure.contrib.str-utils))
 
 (defn tal:replace [argument global local]
 ; argument ::= (['text'] | 'structure') expression
-  (let [path (tales/path (re-gsub #"^text |^structure " "" argument) (conj @global local))]
+  (let [path (tales/evaluate (re-gsub #"^text |^structure " "" argument) (conj @global local))]
     (cond (= path :nothing)
 	  ""
 	  (= path :default)
@@ -33,7 +34,7 @@
 	    scope (re-find #"^local|^global" argument)
 	    define_var (re-gsub #"^local |^global " "" argument)
 	    [variable_name expression] (re-split #" " define_var 2)
-	    result (tales/path expression (conj @global local))
+	    result (tales/evaluate expression (conj @global local))
 	    ]
 	(when (= scope "global") (dosync (alter global assoc (keyword variable_name) result)))
 	(recur (rest arguments)
@@ -43,7 +44,7 @@
 
 (defn tal:condition [argument global local]
 ;argument ::= expression
-  (let [result (tales/path argument (conj @global local))]
+  (let [result (tales/evaluate argument (conj @global local))]
     (if (and result (not (= result :nothing)))
       true
       false)))
@@ -60,7 +61,7 @@
 	    [attribute_name expression] (re-split #" " attribute_statement 2)
 	    ; since hiccups doesn't know about namespaces yet,
 	    ; ignoring difference between namespace and name for now
-	    result (tales/path expression (conj @global local))
+	    result (tales/evaluate expression (conj @global local))
 	    ]
 	(recur (rest arguments)
 	       (cond (= result :nothing)
@@ -72,8 +73,10 @@
 
 
 ; TODO: throw error on unknown tal commands
+; TODO: tal:on-error
 (defn process-element [element 
 		       global local]
+  (try
   (let [element
 	(cond
 	 (empty? (:attrs element)) ; nothing to do if we have no attrs
@@ -89,6 +92,10 @@
 	 (throw (tal.TALError. "duplicate TAL attribute 'content'"))
 	 (> (count (filter #(= (key %) :tal:attributes) (:attrs element))) 1)
 	 (throw (tal.TALError. "duplicate TAL attribute 'attributes'"))
+	 (> (count (filter #(= (key %) :tal:omit-tag) (:attrs element))) 1)
+	 (throw (tal.TALError. "duplicate TAL attribute 'omit-tag'"))
+	 (> (count (filter #(= (key %) :tal:on-error) (:attrs element))) 1)
+	 (throw (tal.TALError. "duplicate TAL attribute 'on-error'"))
 	 (and (contains? element :tal:replace) (contains? element :tal:content))
 	 (throw (tal.TALError. "tal:content and tal:replace are mutually exclusive"))
 	 :else ; no errors yet
@@ -103,7 +110,7 @@
 	     (if (contains? (:attrs element) :tal:repeat) ; process tal:repeat if present
 	       (let [[variable_name expression] (re-split #" " (:tal:repeat (:attrs element)) 2)
 		     variable_name (keyword variable_name)
-		     repeat (tales/path expression (conj @global local))
+		     repeat (tales/evaluate expression (conj @global local))
 		     attrs (dissoc (:attrs element) :tal:repeat :tal:condition :tal:define)
 		     element (assoc element :attrs attrs)]
 		 (vec
@@ -150,17 +157,22 @@
     (cond (string? element)
 	  [element]
 	  (vector? element)
-	  (do
-	    (println element)
-	    element)
+	  element
 	  :else
 	  (vector ; TODO: i'm not fond of all this vector wrapping, is it really necessary? 
 	  (vec
 	   (cons (:tag element)
 		 (cons (apply dissoc (:attrs element) (filter #(re-find #"^:tal:" (str %)) (keys (:attrs element))))
 		       (apply concat (for [e (:content element)]
-			 (process-element e global local)
-			 )))))))))
+				       (process-element e global local)
+				       ))))))))
+  (catch Exception e
+    ; TODO: handle cases such as "(if) nothing"
+    (if (contains? (:attrs element) :tal:on-error)
+      (process-element (assoc element :attrs {:tal:content (:tal:on-error (:attrs element))})
+		       global local)
+      (throw e))) ; TODO: this seems to wrap the exception in a RuntimeException, figure out why.
+  ))
 
 (defmulti compile-html-template 
   (fn [input context]
