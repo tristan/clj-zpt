@@ -44,6 +44,16 @@
 (defn evaluate [s context]
   (cond (re-find #"^string:" s)
 	(string (re-gsub #"^string:[ ]*" "" s) context)
+	(re-find #"^python:" s)
+	(throw (Exception. "python prefix not supported")) ; TODO: jython?
+	(re-find #"^not:" s)
+	(let [r (evaluate (re-gsub #"^not:[ ]*" "" s) context)]
+	  (cond (integer? r)
+		(= r 0)
+		(or (nil? r) (= :nothing r))
+		true
+		:else
+		(empty? r)))
 	(re-find #"^path:" s)
 	(path (.trim (re-gsub #"^path:" "" s)) context)
 	:else ; assume path

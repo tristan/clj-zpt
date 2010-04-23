@@ -1,7 +1,8 @@
 (ns tal
   (:require hiccup.core
 	    clojure.xml
-	    tales)
+	    tales
+	    clojure.stacktrace)
   (:import org.apache.commons.io.IOUtils
 	   KeyError)
   (:use clojure.contrib.str-utils))
@@ -73,11 +74,12 @@
 
 
 ; TODO: throw error on unknown tal commands
-; TODO: tal:on-error
 (defn process-element [element 
 		       global local]
   (try
-  (let [element
+  (let [unsupported (filter #(re-find #"^:tal:" (str (key %)))
+			    (dissoc (:attrs element) :tal:define :tal:repeat :tal:replace :tal:content :tal:attributes :tal:omit-tag :tal:on-error))
+	element
 	(cond
 	 (empty? (:attrs element)) ; nothing to do if we have no attrs
 	 element
@@ -94,6 +96,8 @@
 	 (throw (tal.TALError. "duplicate TAL attribute 'attributes'"))
 	 (> (count (filter #(= (key %) :tal:omit-tag) (:attrs element))) 1)
 	 (throw (tal.TALError. "duplicate TAL attribute 'omit-tag'"))
+	 (not (empty? unsupported))
+	 (throw (tal.TALError. (str "bad TAL attribute: '" (re-gsub #"^:tal:" "" (str (key (first unsupported)))) "'")))
 	 (> (count (filter #(= (key %) :tal:on-error) (:attrs element))) 1)
 	 (throw (tal.TALError. "duplicate TAL attribute 'on-error'"))
 	 (and (contains? element :tal:replace) (contains? element :tal:content))
@@ -168,10 +172,11 @@
 				       ))))))))
   (catch Exception e
     ; TODO: handle cases such as "(if) nothing"
-    (if (contains? (:attrs element) :tal:on-error)
+    (if (and (contains? (:attrs element) :tal:on-error) 
+	     (not (= tal.TALError (class (clojure.stacktrace/root-cause e)))))
       (process-element (assoc element :attrs {:tal:content (:tal:on-error (:attrs element))})
 		       global local)
-      (throw e))) ; TODO: this seems to wrap the exception in a RuntimeException, figure out why.
+      (throw (clojure.stacktrace/root-cause e)))) ; TODO: figure out where java.lang.reflect.InvocationTargetException comes from
   ))
 
 (defmulti compile-html-template 
