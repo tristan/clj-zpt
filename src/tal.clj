@@ -117,21 +117,19 @@
 		     repeat (tales/evaluate expression (conj @global local))
 		     attrs (dissoc (:attrs element) :tal:repeat :tal:condition :tal:define)
 		     element (assoc element :attrs attrs)]
-		 (vec
 		  (for [index (range (count repeat))]
-		    (first
-		     (process-element element
-				      global
-				      (conj local {:repeat 
-						   {variable_name
-						    {:index index
-						     :number (inc index)
-						     :even (even? index)
-						     :odd (odd? index)
-						     :start (= 0 index)
-						     :end (= (dec (count repeat)) index)
-						     :length (count repeat)}}
-						   variable_name (nth repeat index)}))))))
+		    (process-element element
+				     global
+				     (conj local {:repeat 
+						  {variable_name
+						   {:index index
+						    :number (inc index)
+						    :even (even? index)
+						    :odd (odd? index)
+						    :start (= 0 index)
+						    :end (= (dec (count repeat)) index)
+						    :length (count repeat)}}
+						  variable_name (nth repeat index)}))))
 	       (let [element (if (contains? (:attrs element) :tal:replace) ; process tal:replace
 			       ; NOTE: the current replace implementation will ignore tal:attributes
 			       ; unless the replace is cancelled
@@ -153,23 +151,20 @@
 		     (if (and (contains? (:attrs element) :tal:omit-tag) ; tal:omit-tag
 			      (or (= (:tal:omit-tag (:attrs element)) "")
 				  (tal:condition (:tal:omit-tag (:attrs element)) global local)))
-		       (vec
-			(apply concat (for [e (:content element)]
-					(process-element e global local))))
+		       (for [e (:content element)]
+			 (process-element e global local))
 		       element))
 		   ))))))]
     (cond (string? element)
-	  [element]
-	  (vector? element)
+	  element
+	  (seq? element)
 	  element
 	  :else
-	  (vector ; TODO: i'm not fond of all this vector wrapping, is it really necessary? 
-	  (vec
-	   (cons (:tag element)
-		 (cons (apply dissoc (:attrs element) (filter #(re-find #"^:tal:" (str %)) (keys (:attrs element))))
-		       (apply concat (for [e (:content element)]
-				       (process-element e global local)
-				       ))))))))
+	  (vector
+	   (:tag element)
+	   (apply dissoc (:attrs element) (filter #(re-find #"^:tal:" (str %)) (keys (:attrs element))))
+	   (for [e (:content element)]
+	     (process-element e global local)))))
   (catch Exception e
     ; TODO: handle cases such as "(if) nothing"
     (if (and (contains? (:attrs element) :tal:on-error) 
@@ -196,8 +191,7 @@
 					   #^clojure.lang.PersistentArrayMap context] ; input is inputstream
   ;(println (clojure.xml/parse input))
   (hiccup.core/html 
-   (let [r (first (process-element (clojure.xml/parse input) (ref context) {}))]
-     (println r)
+   (let [r (process-element (clojure.xml/parse input) (ref context) {})]
      r)
   )
 )
