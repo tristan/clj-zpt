@@ -1,6 +1,6 @@
-(ns tales
+(ns clj-zpt.tales
   (:use clojure.contrib.str-utils)
-  (:import KeyError))
+  (:import clj_zpt.KeyError))
 
 (defn missing-key-in?
   "similar to get-in except returns the first key which isn't in the map or false if all keys exist"
@@ -12,7 +12,6 @@
 	     (rest ks))
       (first ks))))
 
-; TODO: throw KeyError if result is nil
 (defn path [p context]
   (let [results 
 	(map #(cond (= (first %) :default)
@@ -28,9 +27,11 @@
 			    :nothing)) ; replace nil values with :nothing
 			r)))
 	     (for [p (re-split #"\|" p)]
-	       (map keyword (re-split #"\/" (.trim p)))))]
-    (or (first (drop-while #(instance? Exception %) results))
-	(throw (first results)))))
+	       (map keyword (re-split #"\/" (.trim p)))))
+	r (first (drop-while #(instance? Exception %) results))]
+    (if (nil? r)
+      (throw (first results))
+      r)))
 
 (defn string [s context]
   (reduce #(re-gsub (re-pattern (str "(?<!\\$)\\$" %2 "(?=[ ]+|$)|(?<!\\$)\\$\\{" %2 "\\}")) 
@@ -48,7 +49,9 @@
 	(throw (Exception. "python prefix not supported")) ; TODO: jython?
 	(re-find #"^not:" s)
 	(let [r (evaluate (re-gsub #"^not:[ ]*" "" s) context)]
-	  (cond (integer? r)
+	  (cond (or (true? r) (false? r))
+		(not r)
+		(integer? r)
 		(= r 0)
 		(or (nil? r) (= :nothing r))
 		true

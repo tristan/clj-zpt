@@ -1,4 +1,4 @@
-(ns tal.TALError
+(ns clj-zpt.tal.TALError
     (:gen-class
      :extends Exception
      ))

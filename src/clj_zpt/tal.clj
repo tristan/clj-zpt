@@ -1,10 +1,11 @@
-(ns tal
+(ns clj-zpt.tal
   (:require hiccup.core
 	    clojure.xml
-	    tales
+	    [clj-zpt.tales :as tales]
 	    clojure.stacktrace)
   (:import org.apache.commons.io.IOUtils
-	   KeyError)
+	   clj_zpt.KeyError
+	   clj_zpt.tal.TALError)
   (:use clojure.contrib.str-utils))
 
 (defn tal:replace [argument global local]
@@ -73,35 +74,36 @@
 		     (assoc attrs (keyword attribute_name) result)))))))
 
 
-; TODO: throw error on unknown tal commands
 (defn process-element [element 
 		       global local]
   (try
   (let [unsupported (filter #(re-find #"^:tal:" (str (key %)))
-			    (dissoc (:attrs element) :tal:define :tal:repeat :tal:replace :tal:content :tal:attributes :tal:omit-tag :tal:on-error))
+			    (dissoc (:attrs element) :tal:define :tal:condition :tal:repeat :tal:replace :tal:content :tal:attributes :tal:omit-tag :tal:on-error))
 	element
 	(cond
 	 (empty? (:attrs element)) ; nothing to do if we have no attrs
 	 element
 	 ; error checking
 	 (> (count (filter #(= (key %) :tal:define) (:attrs element))) 1)
-	 (throw (tal.TALError. "duplicate TAL attribute 'define'"))
+	 (throw (TALError. "duplicate TAL attribute 'define'"))
 	 (> (count (filter #(= (key %) :tal:repeat) (:attrs element))) 1)
-	 (throw (tal.TALError. "duplicate TAL attribute 'repeat'"))
+	 (throw (TALError. "duplicate TAL attribute 'repeat'"))
 	 (> (count (filter #(= (key %) :tal:replace) (:attrs element))) 1)
-	 (throw (tal.TALError. "duplicate TAL attribute 'replace'"))
+	 (throw (TALError. "duplicate TAL attribute 'replace'"))
+	 (> (count (filter #(= (key %) :tal:condition) (:attrs element))) 1)
+	 (throw (TALError. "duplicate TAL attribute 'condition'"))
 	 (> (count (filter #(= (key %) :tal:content) (:attrs element))) 1)
-	 (throw (tal.TALError. "duplicate TAL attribute 'content'"))
+	 (throw (TALError. "duplicate TAL attribute 'content'"))
 	 (> (count (filter #(= (key %) :tal:attributes) (:attrs element))) 1)
-	 (throw (tal.TALError. "duplicate TAL attribute 'attributes'"))
+	 (throw (TALError. "duplicate TAL attribute 'attributes'"))
 	 (> (count (filter #(= (key %) :tal:omit-tag) (:attrs element))) 1)
-	 (throw (tal.TALError. "duplicate TAL attribute 'omit-tag'"))
+	 (throw (TALError. "duplicate TAL attribute 'omit-tag'"))
 	 (not (empty? unsupported))
-	 (throw (tal.TALError. (str "bad TAL attribute: '" (re-gsub #"^:tal:" "" (str (key (first unsupported)))) "'")))
+	 (throw (TALError. (str "bad TAL attribute: '" (re-gsub #"^:tal:" "" (str (key (first unsupported)))) "'")))
 	 (> (count (filter #(= (key %) :tal:on-error) (:attrs element))) 1)
-	 (throw (tal.TALError. "duplicate TAL attribute 'on-error'"))
+	 (throw (TALError. "duplicate TAL attribute 'on-error'"))
 	 (and (contains? element :tal:replace) (contains? element :tal:content))
-	 (throw (tal.TALError. "tal:content and tal:replace are mutually exclusive"))
+	 (throw (TALError. "tal:content and tal:replace are mutually exclusive"))
 	 :else ; no errors yet
 	 (let [local ; tal:define
 	       (if (contains? (:attrs element) :tal:define)
@@ -168,10 +170,10 @@
   (catch Exception e
     ; TODO: handle cases such as "(if) nothing"
     (if (and (contains? (:attrs element) :tal:on-error) 
-	     (not (= tal.TALError (class (clojure.stacktrace/root-cause e)))))
+	     (not (= TALError (class (clojure.stacktrace/root-cause e)))))
       (process-element (assoc element :attrs {:tal:content (:tal:on-error (:attrs element))})
 		       global local)
-      (throw (clojure.stacktrace/root-cause e)))) ; TODO: figure out where java.lang.reflect.InvocationTargetException comes from
+      (throw (clojure.stacktrace/root-cause e)))) ; DONE: invoke exception isn't a problem
   ))
 
 (defmulti compile-html-template 
@@ -201,7 +203,7 @@
   (compile-html-template
    (let [f (java.io.File. input)]
      (if (.exists f)
-       (java.io.FileInputStream f)
+       (java.io.FileInputStream. f)
        (IOUtils/toInputStream input)))
    context))
 
