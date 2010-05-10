@@ -2,6 +2,12 @@
   (:use clojure.contrib.str-utils)
   (:import clj_zpt.KeyError))
 
+(def extensions (ref {}))
+
+(defn register-extension [key handler]
+  (dosync (alter extensions assoc (str key ":") handler))
+  (println "registered TALES extension:" key))
+
 (defn missing-key-in?
   "similar to get-in except returns the first key which isn't in the map or false if all keys exist"
   [m ks]
@@ -59,6 +65,8 @@
 		(empty? r)))
 	(re-find #"^path:" s)
 	(path (.trim (re-gsub #"^path:" "" s)) context)
+	(get @extensions (re-find #"^[\w]+:" s))
+	((get @extensions (re-find #"^[\w]+:" s)) (.trim (re-gsub #"^[\w]+:" "" s)) context)
 	:else ; assume path
 	(path (.trim s) context)
 	))

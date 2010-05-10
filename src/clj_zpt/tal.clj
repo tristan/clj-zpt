@@ -210,3 +210,4 @@
 (defmethod compile-html-template [2 true] [#^java.io.File input
 					   #^clojure.lang.PersistentArrayMap context]
   (compile-html-template (java.io.FileInputStream. input) context))
+  
