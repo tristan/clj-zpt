@@ -2,9 +2,10 @@
 (defproject clj-zpt "0.0.1-SNAPSHOT"
   :description ""
   :url ""
-  :dependencies [[org.clojure/clojure "1.2.0-master-SNAPSHOT"]
-                 [org.clojure/clojure-contrib "1.2.0-master-SNAPSHOT"]
-		 [hiccup "0.2.3"]
+  :dependencies [[hiccup "0.2.3" :exclusions [org.clojure/clojure
+					      org.clojure/clojure-contrib]]
 		 [commons-io/commons-io "1.4"]
 		 ]
+  :dev-dependencies [[org.clojure/clojure "1.1.0"]]
+  :namespaces [clj-zpt.KeyError clj-zpt.tal.TALError] ; only compiling 
   )
