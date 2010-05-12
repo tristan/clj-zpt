@@ -8,173 +8,168 @@
 	   clj_zpt.tal.TALError)
   (:use clojure.contrib.str-utils))
 
-(defn tal:replace [argument global local]
-; argument ::= (['text'] | 'structure') expression
-  (let [path (tales/evaluate (re-gsub #"^text |^structure " "" argument) (conj @global local))]
-    (cond (= path :nothing)
-	  ""
-	  (= path :default)
-	  nil
-	  :else
-	  (if (re-find #"^structure " argument)
-	    (str path)
-	    (hiccup.core/h (str path))))))
+(defn dissoc-in [m [k & ks]]
+  (if ks
+    (assoc m k (dissoc-in (get m k) ks))
+    (dissoc m k)))
 
-(defn tal:content [argument global local]
-; argument ::= (['text'] | 'structure') expression
-  (tal:replace argument global local))
+(declare process-element)
 
-(defn tal:define [argument global local]
-; argument       ::= define_scope [';' define_scope]*
-; define_scope   ::= (['local'] | 'global') define_var
-; define_var     ::= variable_name expression
-; variable_name  ::= Name
-  (loop [arguments (re-split #"(?<!;);(?!;)" argument) local local]
-    (if (empty? arguments)
-      local
-      (let [argument (first arguments)
-	    scope (re-find #"^local|^global" argument)
-	    define_var (re-gsub #"^local |^global " "" argument)
-	    [variable_name expression] (re-split #" " define_var 2)
-	    result (tales/evaluate expression (conj @global local))
-	    ]
-	(when (= scope "global") (dosync (alter global assoc (keyword variable_name) result)))
-	(recur (rest arguments)
-	       (if (= scope "global") ; TODO: is (= (keyword "string") :string) more efficient
-		 local
-		 (assoc local (keyword variable_name) result)))))))
+(defn finalise-element [element]
+  (let [tag `[~(:tag element)
+	      (let [~'attrs (remove nil? (list
+					  ~@(for [attr (or (dissoc (:tal:attrs element) :tal:on-error :tal:omit-tag) 
+							   (dissoc (:attrs element) :tal:content :tal:on-error :tal:omit-tag))]
+					      (if (seq? (val attr))
+						`(let [~'r ~(val attr)]
+						   (cond (= ~'r :nothing)
+							 nil
+							 (= ~'r :default)
+							 ~(if (get-in element [:attrs (key attr)])
+							    `[~(key attr) ~(get-in element [:attrs (key attr)])]
+							    `nil)
+							 :else
+							 [~(key attr) ~'r]))
+						`[~(key attr) ~(val attr)]))))]
+		(zipmap (map first ~'attrs) (map second ~'attrs)))
+	      ~(if (contains? (:attrs element) :tal:content) ; no need to check if :tal:replace is present, that case should have been handled by tal:replace
+		 (let [structure (re-find #"^structure " (:tal:content (:attrs element)))
+		       expression (re-gsub #"^text |^structure " "" (:tal:content (:attrs element)))]
+		 `(let [~'r (tales/evaluate ~expression (conj ~'@global ~'local))]
+		    (cond (= ~'r :nothing) ; replace with nothing
+			  nil
+			  (= ~'r :default) ; ignore replace
+			  (list ~@(for [c (:content element)]
+				    (process-element c)))
+			  :else ; replace this element
+			  ~(if structure
+			     `(str ~'r)
+			     `(hiccup.core/h (str ~'r))))))
+		 `(list ~@(for [c (:content element)]
+			    (process-element c))))]]
+    (if (contains? (:attrs element) :tal:omit-tag)
+      (if (= (:tal:omit-tag (:attrs element)) "")
+	(cons 'list (drop 2 tag))
+	`(let [~'tag ~tag]
+	   (if (tales/coerce-bool (tales/evaluate ~(:tal:omit-tag (:attrs element)) (conj ~'@global ~'local)))
+	     (drop 2 ~'tag)
+	     ~'tag)))
+      tag)))
 
-(defn tal:condition [argument global local]
-;argument ::= expression
-  (let [result (tales/evaluate argument (conj @global local))]
-    (if (and result (not (= result :nothing)))
-      true
-      false)))
+(defn tal:attributes [element]
+  (if (contains? (:attrs element) :tal:attributes)
+    (loop [arguments (re-split #"(?<!;);(?!;)" (:tal:attributes (:attrs element))) attrs (dissoc (:attrs element) :tal:attributes)]
+      (if (empty? arguments)
+	(finalise-element (dissoc-in (assoc element :tal:attrs attrs) [:attrs :tal:attributes]))
+	(let [attribute_statement (first arguments)
+	      [attribute_name expression] (re-split #" " attribute_statement 2)
+	      ; since hiccups doesn't know about namespaces yet,
+	      ; ignoring difference between namespace and name for now
+	      result `(tales/evaluate ~expression (conj ~'@global ~'local))
+	      ]
+	  (recur (rest arguments)
+		 (assoc attrs (keyword attribute_name) result)))))
+    (finalise-element element)))
+      
+(defn tal:replace [element]
+  (if (contains? (:attrs element) :tal:replace)
+    (if (contains? (:attrs element) :tal:content)
+      (throw (TALError. "tal:content and tal:replace are mutually exclusive"))
+      (let [structure (re-find #"^structure " (:tal:replace (:attrs element)))
+	    expression (re-gsub #"^text |^structure " "" (:tal:replace (:attrs element)))]
+      `(let [~'r (tales/evaluate ~expression (conj ~'@global ~'local))]
+	 (cond (= ~'r :nothing) ; replace with nothing
+	       ""
+	       (= ~'r :default) ; ignore replace
+	       ~(tal:attributes (dissoc-in element [:attrs :tal:replace]))
+	       :else ; replace this element
+	       ~(if structure
+		  `(str ~'r)
+		  `(hiccup.core/h (str ~'r)))))))
+    (tal:attributes element)))
 
-(defn tal:attributes [argument attrs global local]
-; argument             ::= attribute_statement [';' attribute_statement]*
-; attribute_statement  ::= attribute_name expression
-; attribute_name       ::= [namespace ':'] Name
-; namespace            ::= Name
-  (loop [arguments (re-split #"(?<!;);(?!;)" argument) attrs attrs]
-    (if (empty? arguments)
-      attrs
-      (let [attribute_statement (first arguments)
-	    [attribute_name expression] (re-split #" " attribute_statement 2)
-	    ; since hiccups doesn't know about namespaces yet,
-	    ; ignoring difference between namespace and name for now
-	    result (tales/evaluate expression (conj @global local))
-	    ]
-	(recur (rest arguments)
-	       (cond (= result :nothing)
-		     (dissoc attrs (keyword attribute_name))
-		     (= result :default)
-		     attrs
-		     :else
-		     (assoc attrs (keyword attribute_name) result)))))))
+(defn tal:repeat [element]
+  (if (contains? (:attrs element) :tal:repeat)
+    (let [[variable_name expression] (re-split #" " (:tal:repeat (:attrs element)) 2)
+	  variable_name (keyword variable_name)]
+      `(let [~'repeat (tales/evaluate ~expression (conj ~'@global ~'local))]
+	 (for [~'index (range (count ~'repeat))]
+	   (let [~'local (conj ~'local {:repeat {~variable_name
+						 {:index ~'index
+						  :number (inc ~'index)
+						  :even (even? ~'index)
+						  :odd (odd? ~'index)
+						  :start (= 0 ~'index)
+						  :end (= (dec (count ~'repeat)) ~'index)
+						  :length (count ~'repeat)}}
+					~variable_name (nth ~'repeat ~'index)})]
+	     ~(tal:replace (dissoc-in element [:attrs :tal:repeat]))))))
+    (tal:replace element)))
 
+(defn tal:condition [element]
+  (if (contains? (:attrs element) :tal:condition)
+    `(if (tales/coerce-bool (tales/evaluate ~(:tal:condition (:attrs element)) (conj ~'@global ~'local)))
+       ~(tal:repeat (dissoc-in element [:attrs :tal:condition]))
+       "")
+    (tal:repeat element)))
 
-(defn process-element [element 
-		       global local]
-  (try
-  (let [unsupported (filter #(re-find #"^:tal:" (str (key %)))
-			    (dissoc (:attrs element) :tal:define :tal:condition :tal:repeat :tal:replace :tal:content :tal:attributes :tal:omit-tag :tal:on-error))
-	element
-	(cond
-	 (empty? (:attrs element)) ; nothing to do if we have no attrs
-	 element
-	 ; error checking
-	 (> (count (filter #(= (key %) :tal:define) (:attrs element))) 1)
-	 (throw (TALError. "duplicate TAL attribute 'define'"))
-	 (> (count (filter #(= (key %) :tal:repeat) (:attrs element))) 1)
-	 (throw (TALError. "duplicate TAL attribute 'repeat'"))
-	 (> (count (filter #(= (key %) :tal:replace) (:attrs element))) 1)
-	 (throw (TALError. "duplicate TAL attribute 'replace'"))
-	 (> (count (filter #(= (key %) :tal:condition) (:attrs element))) 1)
-	 (throw (TALError. "duplicate TAL attribute 'condition'"))
-	 (> (count (filter #(= (key %) :tal:content) (:attrs element))) 1)
-	 (throw (TALError. "duplicate TAL attribute 'content'"))
-	 (> (count (filter #(= (key %) :tal:attributes) (:attrs element))) 1)
-	 (throw (TALError. "duplicate TAL attribute 'attributes'"))
-	 (> (count (filter #(= (key %) :tal:omit-tag) (:attrs element))) 1)
-	 (throw (TALError. "duplicate TAL attribute 'omit-tag'"))
-	 (not (empty? unsupported))
-	 (throw (TALError. (str "bad TAL attribute: '" (re-gsub #"^:tal:" "" (str (key (first unsupported)))) "'")))
-	 (> (count (filter #(= (key %) :tal:on-error) (:attrs element))) 1)
-	 (throw (TALError. "duplicate TAL attribute 'on-error'"))
-	 (and (contains? element :tal:replace) (contains? element :tal:content))
-	 (throw (TALError. "tal:content and tal:replace are mutually exclusive"))
-	 :else ; no errors yet
-	 (let [local ; tal:define
-	       (if (contains? (:attrs element) :tal:define)
-		 (tal:define (:tal:define (:attrs element)) global local)
-		 local)
-	       ]
-	   (if (not-every? true? (map #(tal:condition (val %) global local)
-				      (filter #(= (key %) :tal:condition) (:attrs element))))
-	     "" ; one or more tal:conditions returned false, so omit this element
-	     (if (contains? (:attrs element) :tal:repeat) ; process tal:repeat if present
-	       (let [[variable_name expression] (re-split #" " (:tal:repeat (:attrs element)) 2)
-		     variable_name (keyword variable_name)
-		     repeat (tales/evaluate expression (conj @global local))
-		     attrs (dissoc (:attrs element) :tal:repeat :tal:condition :tal:define)
-		     element (assoc element :attrs attrs)]
-		  (for [index (range (count repeat))]
-		    (process-element element
-				     global
-				     (conj local {:repeat 
-						  {variable_name
-						   {:index index
-						    :number (inc index)
-						    :even (even? index)
-						    :odd (odd? index)
-						    :start (= 0 index)
-						    :end (= (dec (count repeat)) index)
-						    :length (count repeat)}}
-						  variable_name (nth repeat index)}))))
-	       (let [element (if (contains? (:attrs element) :tal:replace) ; process tal:replace
-			       ; NOTE: the current replace implementation will ignore tal:attributes
-			       ; unless the replace is cancelled
-			       (or (tal:replace (:tal:replace (:attrs element)) global local) element)
-			       (if (contains? (:attrs element) :tal:content) ; process tal:content
-				 (let [new-content (tal:content (:tal:content (:attrs element)) global local)]
-				   (if new-content
-				     (assoc element 
-				       :content [new-content])
-				     element))
-				 element))]
-		 (if (string? element)
-		   element ; if the element has been replaced with a string, just return it
-		   (let [element (if (contains? (:attrs element) :tal:attributes) ; tal:attributes
-				   (assoc element :attrs (tal:attributes (:tal:attributes (:attrs element))
-									 (:attrs element)
-									 global local))
-				   element)]
-		     (if (and (contains? (:attrs element) :tal:omit-tag) ; tal:omit-tag
-			      (or (= (:tal:omit-tag (:attrs element)) "")
-				  (tal:condition (:tal:omit-tag (:attrs element)) global local)))
-		       (for [e (:content element)]
-			 (process-element e global local))
-		       element))
-		   ))))))]
-    (cond (string? element)
-	  element
-	  (seq? element)
-	  element
-	  :else
-	  (vector
-	   (:tag element)
-	   (apply dissoc (:attrs element) (filter #(re-find #"^:tal:" (str %)) (keys (:attrs element))))
-	   (for [e (:content element)]
-	     (process-element e global local)))))
-  (catch Exception e
-    ; TODO: handle cases such as "(if) nothing"
-    (if (and (contains? (:attrs element) :tal:on-error) 
-	     (not (= TALError (class (clojure.stacktrace/root-cause e)))))
-      (process-element (assoc element :attrs {:tal:content (:tal:on-error (:attrs element))})
-		       global local)
-      (throw (clojure.stacktrace/root-cause e)))) ; DONE: invoke exception isn't a problem
-  ))
+(defn tal:define [element]
+  (if (contains? (:attrs element) :tal:define) ; process tal:define
+    (letfn [(do-arg [arguments]
+		    (if (empty? arguments)
+		      (list (tal:condition (dissoc-in element [:attrs :tal:define])))
+		      (let [argument (first arguments)
+			    scope (re-find #"^local|^global" argument)
+			    define_var (re-gsub #"^local |^global " "" argument)
+			    [variable_name expression] (re-split #" " define_var 2)
+			    result `(tales/evaluate ~expression (conj ~'@global ~'local))]
+			(if (= scope "global")
+			  (cons `(dosync (alter ~'global assoc ~(keyword variable_name) ~result))
+				`(~@(do-arg (rest arguments))))
+			  (list `(let [~'r ~result
+				       ~'local (if (= ~'r :default)
+						~'local
+						(assoc ~'local ~(keyword variable_name) ~'r))]
+				   ~@(do-arg (rest arguments))))))))]
+      (do-arg (re-split #"(?<!;);(?!;)" (get-in element [:attrs :tal:define]))))
+    (tal:condition element))) ; need list incase initial element is the vector
+
+(defn tal:on-error [element]
+  (if (contains? (:attrs element) :tal:on-error)
+    `(try
+      ~(tal:define (dissoc-in element [:attrs :tal:on-error]))
+      (catch KeyError ~'e
+	~(if (= (:tal:on-error (:attrs element)) "")
+	   ""
+	   `(tales/evaluate ~(:tal:on-error (:attrs element)) (conj ~'@global ~'local)))))
+    (tal:define element)))
+
+(defn process-element [element]
+  (cond (map? element)
+	(let [x (tal:on-error element)]
+	  (if (seq? (first x))
+	    (cons 'do x)
+	    x))
+	(string? element)
+	`(tales/string ~element (conj ~'@global ~'local)) ; TODO: should only call this for strings that have $ or ${ in them
+	:else
+	element))
+
+(defn compile-template [#^java.io.InputStream input]
+  (println "compiling template...")
+  (let [x (clojure.xml/parse input)
+	h (process-element x)]
+    ;(println "..................")
+    ;(println x)
+    ;(println "..................")
+    ;(println h)
+    ;(println "..................")
+    (eval `(fn [~'global]
+	      (let [~'global (ref ~'global) ~'local {}
+		    ~'res ~h]
+		;(println ~h)
+		;(println "............")
+		(hiccup.core/html ~'res))))))
 
 (defmulti compile-html-template 
   (fn [input context]
@@ -191,11 +186,8 @@
 
 (defmethod compile-html-template [0 true] [#^java.io.InputStream input 
 					   #^clojure.lang.PersistentArrayMap context] ; input is inputstream
-  ;(println (clojure.xml/parse input))
-  (hiccup.core/html 
-   (let [r (process-element (clojure.xml/parse input) (ref context) {})]
-     r)
-  )
+  (let [func (compile-template input)]
+    (func context))
 )
 
 (defmethod compile-html-template [1 true] [#^String input 
@@ -210,4 +202,3 @@
 (defmethod compile-html-template [2 true] [#^java.io.File input
 					   #^clojure.lang.PersistentArrayMap context]
   (compile-html-template (java.io.FileInputStream. input) context))
-  

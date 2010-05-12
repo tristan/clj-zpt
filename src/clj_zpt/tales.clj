@@ -48,21 +48,26 @@
 		  (map #(.substring % 1) (re-seq #"(?<!\$)\$(?!\{|\$)[^ ]+" s))
 		  (map #(.substring % 2 (dec (count %))) (re-seq #"(?<!\$)\$\{[^\}^\{]*\}{1}" s)))))))
 
+(defn coerce-bool [r]
+  (cond (or (true? r) (false? r))
+	r
+	(integer? r)
+	(not (= r 0))
+	(or (nil? r) (= :nothing r))
+	false
+	(= :default r)
+	true
+	:else
+	(not (empty? r))))
+
 (defn evaluate [s context]
+  ;(println "CALLED evaluate: " s context)
   (cond (re-find #"^string:" s)
 	(string (re-gsub #"^string:[ ]*" "" s) context)
 	(re-find #"^python:" s)
 	(throw (Exception. "python prefix not supported")) ; TODO: jython?
 	(re-find #"^not:" s)
-	(let [r (evaluate (re-gsub #"^not:[ ]*" "" s) context)]
-	  (cond (or (true? r) (false? r))
-		(not r)
-		(integer? r)
-		(= r 0)
-		(or (nil? r) (= :nothing r))
-		true
-		:else
-		(empty? r)))
+	(not (coerce-bool (evaluate (re-gsub #"^not:[ ]*" "" s) context)))
 	(re-find #"^path:" s)
 	(path (.trim (re-gsub #"^path:" "" s)) context)
 	(get @extensions (re-find #"^[\w]+:" s))
