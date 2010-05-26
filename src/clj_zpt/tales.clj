@@ -39,14 +39,21 @@
       (throw (first results))
       r)))
 
+(defn re-escape [s]
+  (re-gsub #"\$" "\\\\\\$" 
+	   (re-gsub #"\?" "\\\\\\?"
+		    (re-gsub #"\\" "\\\\\\\\"
+			     s))))
+
 (defn string [s context]
-  (reduce #(re-gsub (re-pattern (str "(?<!\\$)\\$" %2 "(?=[ ]+|$)|(?<!\\$)\\$\\{" %2 "\\}")) 
-		    (path %2 context) %1)
-	  (cons s
-		(distinct 
-		 (concat
-		  (map #(.substring % 1) (re-seq #"(?<!\$)\$(?!\{|\$)[^ ]+" s))
-		  (map #(.substring % 2 (dec (count %))) (re-seq #"(?<!\$)\$\{[^\}^\{]*\}{1}" s)))))))
+  (re-gsub #"\$\$" "\\$"
+	   (reduce #(re-gsub (re-pattern (str "(?<!\\$)\\$" (re-escape %2) "(?=[ ]+|$)|(?<!\\$)\\$\\{" (re-escape %2) "\\}")) 
+			     (path %2 context) %1)
+		   (cons s
+			 (distinct 
+			  (concat
+			   (map #(.substring % 1) (re-seq #"(?<!\$)\$(?!\{|\$)[^ ]+" s))
+			   (map #(.substring % 2 (dec (count %))) (re-seq #"(?<!\$)\$\{[^\}^\{]*\}{1}" s))))))))
 
 (defn coerce-bool [r]
   (cond (or (true? r) (false? r))
