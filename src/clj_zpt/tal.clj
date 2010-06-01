@@ -61,7 +61,7 @@
       tag)))
 
 (defn get-macro [path global local]
-  (println @global)
+  ;(println @global)
   (let [m (tales/path (str path "|nothing") (conj @global local))]
     (if (= :nothing m)
       (let [sp (re-split #"\/" path)

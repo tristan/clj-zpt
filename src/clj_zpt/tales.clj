@@ -55,6 +55,9 @@
 			   (map #(.substring % 1) (re-seq #"(?<!\$)\$(?!\{|\$)[^ ]+" s))
 			   (map #(.substring % 2 (dec (count %))) (re-seq #"(?<!\$)\$\{[^\}^\{]*\}{1}" s))))))))
 
+(defn clj-compile [s]
+  (eval `(fn [~'context] ~(read-string s))))
+
 (defn coerce-bool [r]
   (cond (or (true? r) (false? r))
 	r
@@ -77,6 +80,8 @@
 	(not (coerce-bool (evaluate (re-gsub #"^not:[ ]*" "" s) context)))
 	(re-find #"^path:" s)
 	(path (.trim (re-gsub #"^path:" "" s)) context)
+	(re-find #"^clojure:" s)
+	((clj-compile (.trim (re-gsub #"^clojure:" "" s))) context)
 	(get @extensions (re-find #"^[\w]+:" s))
 	((get @extensions (re-find #"^[\w]+:" s)) (.trim (re-gsub #"^[\w]+:" "" s)) context)
 	:else ; assume path
