@@ -18,7 +18,7 @@
 	     (rest ks))
       (first ks))))
 
-(defn path [p context]
+(defn path [#^String p context]
   (let [results 
 	(map #(cond (= (first %) :default)
 		    :default
@@ -35,27 +35,28 @@
 	     (for [p (re-split #"\|" p)]
 	       (map keyword (re-split #"\/" (.trim p)))))
 	r (first (drop-while #(instance? Exception %) results))]
+    ;(println (str "FOR \"" p "\" got result: " r " <" (type r) ">"))
     (if (nil? r)
       (throw (first results))
       r)))
 
-(defn re-escape [s]
+(defn re-escape [#^String s]
   (re-gsub #"\$" "\\\\\\$" 
 	   (re-gsub #"\?" "\\\\\\?"
 		    (re-gsub #"\\" "\\\\\\\\"
 			     s))))
 
-(defn string [s context]
+(defn string [#^String s context]
   (re-gsub #"\$\$" "\\$"
-	   (reduce #(re-gsub (re-pattern (str "(?<!\\$)\\$" (re-escape %2) "(?=[ ]+|$)|(?<!\\$)\\$\\{" (re-escape %2) "\\}")) 
-			     (path %2 context) %1)
+	   (reduce #(re-gsub (re-pattern (str "(?<!\\$)\\$" (re-escape %2) "(?=[ ]+|$)|(?<!\\$)\\$\\{" (re-escape %2) "\\}"))
+			     (str (path %2 context)) %1)
 		   (cons s
 			 (distinct 
 			  (concat
 			   (map #(.substring % 1) (re-seq #"(?<!\$)\$(?!\{|\$)[^ ]+" s))
 			   (map #(.substring % 2 (dec (count %))) (re-seq #"(?<!\$)\$\{[^\}^\{]*\}{1}" s))))))))
 
-(defn clj-compile [s]
+(defn clj-compile [#^String s]
   (eval `(fn [~'context] ~(read-string s))))
 
 (defn coerce-bool [r]
@@ -70,7 +71,7 @@
 	:else
 	(not (empty? r))))
 
-(defn evaluate [s context]
+(defn evaluate [#^String s context]
   ;(println "CALLED evaluate: " s context)
   (cond (re-find #"^string:" s)
 	(string (re-gsub #"^string:[ ]*" "" s) context)
