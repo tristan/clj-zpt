@@ -16,6 +16,7 @@
 (declare process-element)
 (declare compile-template)
 
+; TODO: fix up cases where tags like <br/> get turned into <br></br>
 (defn finalise-element [element defining-macro? macros]
   (let [tag `[~(:tag element)
 	      (let [~'attrs (remove nil? (list
@@ -46,11 +47,8 @@
 			    ~(if structure
 			       `(str ~'r)
 			       `(hiccup.core/h (str ~'r))))))
-		 ;(if (= (:tag element) :script) ; TODO: this is a quick work around for js problems, need something better
-		 ;  `(list ~@(for [c (:content element)]
-		;	      c))
-		   `(list ~@(for [c (:content element)]
-			      (process-element c defining-macro? macros))))]]
+		 `(list ~@(for [c (:content element)]
+			    (process-element c defining-macro? macros))))]]
     (if (contains? (:attrs element) :tal:omit-tag)
       (if (= (:tal:omit-tag (:attrs element)) "")
 	(cons 'list (drop 2 tag))
